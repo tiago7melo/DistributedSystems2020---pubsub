@@ -1,6 +1,6 @@
 Compiling
 
-In the pubsub directionary:
+In the pubsub directory:
 
 cmake .
 
