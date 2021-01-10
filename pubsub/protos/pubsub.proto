@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package pubsub;
+
+service Pubsub {
+  rpc ShowTagList (ListRequest) returns (ListReply) {}
+  rpc TagSubscribe (SubscribeRequest) returns (stream TagMessage) {}
+  rpc PublisherRegister (RegisterRequest) returns (RegisterOK) {}
+  rpc Publish (stream TagMessage) returns (PublishOK) {}
+}
+
+message TagMessage {
+    string message_text = 1;
+    int32 message_id = 2;
+    int32 message_tag = 3;
+    int64 timestamp = 4;
+}
+
+message ListRequest {
+  bool ok = 1;
+}
+
+message ListReply {
+  string tag_list = 1; 
+  //tag list is limited so it doesn't really matter if we stream it
+}
+
+message SubscribeRequest {
+    int32 tag = 1;
+}
+
+message RegisterRequest {
+    int32 tag = 1;
+}
+
+message RegisterOK {
+    int32 publisher_id = 1;
+    string fixed_tag_text = 2;
+}
+
+message PublishOK {
+  bool ok = 1;
+}
