@@ -69,7 +69,6 @@ class PublisherClient {
     ClientContext context;
     RegisterOK reply;
     Status status = stub_->PublisherRegister(&context, request, &reply);
-    publisher_id = reply.publisher_id();
 
     if (status.ok()) {
       publisher_id = reply.publisher_id();
