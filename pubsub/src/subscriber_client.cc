@@ -59,16 +59,20 @@ class SubscriberClient {
 
     request.set_tag(tag);
     auto reader = std::unique_ptr<ClientReader<TagMessage>>(stub_->TagSubscribe(&context, request));
-
+    
+    cout << "---------------------------------" << endl;
+    cout << "Now receiving messages for tag " << tag << endl;
+    cout << "---------------------------------" << endl;
+    
     TagMessage msg;
     while (reader->Read(&msg)) {
       string text = msg.message_text();
       int id = msg.message_id();
       int tag = msg.message_tag();
       time_t timestamp = msg.timestamp();
-      string timestamp_string = ctime(&timestamp);
+      string timestamp_str = ctime(&timestamp);
 
-      cout << "TAG: " << tag << " ID: " << id << " | " << timestamp_string << "\n"
+      cout << "TAG: " << tag << " ID: " << id << " | " << timestamp_str << "\n"
            << text << "\n";
       cout << "\n-------------\n";
     }
@@ -77,7 +81,8 @@ class SubscriberClient {
     if (status.ok()) {
       std::cout << "Streaming succeeded." << std::endl;
       return true;
-    } else {
+    } 
+    else {
       std::cout << "Streaming failed." << std::endl;
       return false;
     }
