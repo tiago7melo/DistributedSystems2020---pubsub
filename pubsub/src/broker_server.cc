@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <deque>
+#include <time.h>
+#include "unistd.h"
 
 #ifdef BAZEL_BUILD
 #include "examples/protos/pubsub.grpc.pb.h"
@@ -40,10 +43,14 @@ struct Subscriber {
 };
 
 class PubsubServiceImpl final : public Pubsub::Service {
-  std::map<int, vector<Subscriber>> tag_to_client;  // tag, Streams
+  std::map<int, vector<Subscriber>> tag_to_subscriber;  // tag, Streams
   std::mutex mtx[MAX_TAG_SIZE]; 
+  std::map<int, deque<TagMessage>> message_database;
+
+  long long message_lifespan =  60; // in seconds;
   long long publisher_counter = 0;
   long long subscriber_counter = 0;
+
   std::string tag_text[MAX_TAG_SIZE] = {
       "Trial version downloaded", "License purchased",
       "Support service requested", "Bug reported"};
@@ -59,39 +66,50 @@ class PubsubServiceImpl final : public Pubsub::Service {
     int tag = request->tag();
     cout << "Registering new subscriber for tag " << tag << "\n";
     Subscriber sub;
-    //check if tag if valid
+    //check if tag is valid
     if (tag >= 1 && tag <= MAX_TAG_SIZE) {
       subscriber_counter++;
       sub.id = subscriber_counter;
       sub.writer = stream;
 
-      unique_lock<mutex> write_lock(mtx[tag]);
-      tag_to_client[tag].push_back(sub);
-      write_lock.unlock();
+      unique_lock<mutex> sub_lock(mtx[tag-1]);
+      tag_to_subscriber[tag].push_back(sub);
+      sub_lock.unlock();
+
+      //fetching messages of tag in database
+      ClearExpiredMessages(tag);
+      cout << "Cleared old messages\n";
+      for(TagMessage msg : message_database[tag])
+          sub.writer->Write(msg); 
+
 
       // loop that keeps the ServerWriter open until cancellation
       for (;;) {
         if(context->IsCancelled()) {
-          cout << "A subscriber for tag " << tag <<" has disconnected" << "\n";
+          cout << "A subscriber for tag " << tag << " has disconnected" << "\n";
           break;
         }
       }
-      
-      //client cancelled, remove from the tag_to_client map
-      unique_lock<mutex> del_lock(mtx[tag]);
-      auto delete_pos = tag_to_client[tag].end();
-      for(auto s = tag_to_client[tag].begin(); s != tag_to_client[tag].end(); s++) {
-        if (s->id == sub.id) {
-          cout << "   Removing subscriber " << s->id << " from registry\n";
-          delete_pos = s;
-          break;
-        }
-      }
-      tag_to_client[tag].erase(delete_pos);
-      del_lock.unlock();
+      cancel_subscriber(tag,sub.id);
     } 
     else return Status::CANCELLED; //return error if tag is not valid
     return Status::OK;
+  }
+
+  void cancel_subscriber(int tag, int id) {
+      //client cancelled, remove from the tag_to_subscriber map
+      unique_lock<mutex> cancel_lock(mtx[tag-1]);
+      auto delete_pos = tag_to_subscriber[tag].end();
+      for(auto entry = tag_to_subscriber[tag].begin(); entry != tag_to_subscriber[tag].end(); entry++) {
+        if (entry->id == id) {
+          cout << "   Removing subscriber " << entry->id << " from registry\n";
+          delete_pos = entry;
+          break;
+        }
+      }
+      tag_to_subscriber[tag].erase(delete_pos);
+      cancel_lock.unlock();
+      return;
   }
 
   Status PublisherRegister(ServerContext* context, const RegisterRequest* request,
@@ -102,32 +120,63 @@ class PubsubServiceImpl final : public Pubsub::Service {
       publisher_counter++;
       reply->set_publisher_id(publisher_counter);
       reply->set_fixed_tag_text(tag_text[tag - 1]);
-    } else
-      reply->set_publisher_id(-42);
+    }
+    else return Status::CANCELLED;
 
     return Status::OK;
   }
 
   Status Publish(ServerContext* context, ServerReader<TagMessage>* publisher_stream,
                  PublishOK* reply) override {
-    TagMessage msg;
-    // loop where it gets fed messages
+    // loop where broker gets fed messages
     // and redirects to the subscribers of tag, until cancellation
     int target_tag;
+    TagMessage msg;
     while (publisher_stream->Read(&msg) && context->IsCancelled() == false) {
       target_tag = msg.message_tag();
-      std::unique_lock<mutex> write_lock(mtx[target_tag]);
-      for (Subscriber subscriber : tag_to_client[target_tag]) {
+      std::unique_lock<mutex> write_lock(mtx[target_tag-1]);
+
+      for (Subscriber subscriber : tag_to_subscriber[target_tag]) {
         ServerWriter<TagMessage>* subscriber_stream = subscriber.writer;
         subscriber_stream->Write(msg);
       }
+      cout << "Storing message for tag " << target_tag << "\n";
+      message_database[target_tag].push_back(msg);
       write_lock.unlock();
     }
 
     cout << "A publisher for tag " << target_tag << " has disconnected\n";
     return Status::OK;
   }
+
+  bool isExpiredMessage(TagMessage msg) {
+      time_t now = time(NULL);
+      time_t msg_time = msg.timestamp();
+      time_t time_elapsed = now - msg_time;
+      return time_elapsed > message_lifespan;
+  }
+
+  void ClearExpiredMessages(int tag) {
+      unique_lock<mutex> clear_lock(mtx[tag-1]);
+      while(true) {
+          if(message_database[tag].empty()) break;
+
+          auto entry = message_database[tag].begin();
+          TagMessage msg = *entry;
+          
+          if(!isExpiredMessage(msg)) break;
+
+          message_database[tag].pop_front();
+
+          time_t timestamp = msg.timestamp();
+          string timestamp_str = ctime(&timestamp);
+          cout << "Deleted message with ID " <<  msg.message_id() 
+          << " and timestamp " << timestamp_str << "\n";
+      }
+      clear_lock.unlock();
+  }
 };
+
 
 void RunBroker() {
   std::string server_address("0.0.0.0:57575");
