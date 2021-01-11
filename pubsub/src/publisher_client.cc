@@ -70,7 +70,6 @@ class PublisherClient {
     RegisterOK reply;
     Status status = stub_->PublisherRegister(&context, request, &reply);
     publisher_id = reply.publisher_id();
-    if (publisher_id == -42) return false;
 
     if (status.ok()) {
       publisher_id = reply.publisher_id();
