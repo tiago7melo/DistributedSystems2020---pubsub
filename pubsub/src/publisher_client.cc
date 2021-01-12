@@ -9,11 +9,7 @@
 #include <time.h>
 #include "unistd.h"
 
-#ifdef BAZEL_BUILD
-#include "examples/protos/pubsub.grpc.pb.h"
-#else
 #include "pubsub.grpc.pb.h"
-#endif
 
 using namespace std;
 
@@ -75,9 +71,7 @@ class PublisherClient {
       fixed_tag_text = reply.fixed_tag_text();
       return true;
     } else {
-      cout << "Error\n";
-      std::cout << status.error_code() << ": " << status.error_message()
-                << std::endl;
+      cout << "Connection failed, trying again\n";
       return false;
     }
   }
@@ -108,9 +102,9 @@ class PublisherClient {
 
       if (!writer->Write(msg)) break;
 
-        wait_time = d(gen);
-        cout << "Sleeping for " << wait_time << "s\n";
-        sleep(wait_time);
+      wait_time = d(gen);
+      cout << "Sleeping for " << wait_time << "s before sending next message\n";
+      sleep(wait_time);
     }
   }
 
@@ -128,33 +122,26 @@ int main(int argc, char** argv) {
   string target_str = "localhost:57575";
 
   PublisherClient pubsub(
-      grpc::CreateChannel(target_str, grpc::InsecureChannelCredentials()));
-
-  /*std::string user("world");
-  std::string reply = greeter.SayHello(user);
-  std::cout << "Greeter received: " << reply << std::endl;*/
+    grpc::CreateChannel(target_str, grpc::InsecureChannelCredentials()));
 
   cout << "Publisher\n";
-  cout << "Input the number of your option:\n";
-  cout << "1: Get the list of available tags\n2: Skip straight to "
-          "registration\n";
   int option;
-  cin >> option;
+  for(;;) {
+    cout << "1: Get the list of available tags\n2: Skip straight to "
+            "registration\n";
+    cout << "Input the number of your option:\n";
+    cin >> option;
 
-  if (option == 1){
-    pubsub.get_tags();
-    pubsub.Register();
-  }
-  else if (option == 2) {
-    bool register_ok = false;
-    do {
-      register_ok = pubsub.Register();
-      if (!register_ok) cout << "Error\n";
-    } while (!register_ok);
-
-  } else {
-    cout << "Invalid option, program exited.\n";
-    return 0;
+    if (option == 1) {
+      pubsub.get_tags();
+      while(!pubsub.Register()) {}
+      break;
+    }
+    else if (option == 2) { 
+      while(!pubsub.Register()) {}
+      break;
+    }
+    else cout << "Invalid option.\n";
   }
 
   pubsub.RunPublisher();
