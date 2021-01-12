@@ -7,11 +7,7 @@
 #include <thread>
 #include <time.h>
 
-#ifdef BAZEL_BUILD
-#include "examples/protos/pubsub.grpc.pb.h"
-#else
 #include "pubsub.grpc.pb.h"
-#endif
 
 using namespace std;
 
@@ -90,26 +86,23 @@ class SubscriberClient {
 
   void RunSubscriber() {
     cout << "Subscriber\n";
-    cout << "Input the number of your option:\n";
-    cout << "1: Get the list of available tags\n2: Skip straight to "
-            "subscription\n";
     int option;
-    cin >> option;
+    for(;;) {
+      cout << "1: Get the list of available tags\n2: Skip straight to "
+              "registration\n";
+      cout << "Input the number of your option:\n";
+      cin >> option;
 
-    if (option == 1) {
-      get_tags();
-      subscribe();
-    }
-    else if (option == 2) {
-      bool subscribe_ok = false;
-      do {
-        subscribe_ok = subscribe();
-
-        if(!subscribe_ok) cout << "Error\n";
-      } while (!subscribe_ok);
-    } else {
-      cout << "Invalid option, program exited.\n";
-      return;
+      if (option == 1) {
+        get_tags();
+        while(!subscribe()) {}
+        break;
+      }
+      else if (option == 2) { 
+        while(!subscribe()) {}
+        break;
+      }
+      else cout << "Invalid option.\n";
     }
   }
 
@@ -127,10 +120,6 @@ int main(int argc, char** argv) {
   string target_str = "localhost:57575";
   SubscriberClient pubsub(
       grpc::CreateChannel(target_str, grpc::InsecureChannelCredentials()));
-
-  /*std::string user("world");
-  std::string reply = greeter.SayHello(user);
-  std::cout << "Greeter received: " << reply << std::endl;*/
 
   pubsub.RunSubscriber();
 
