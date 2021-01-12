@@ -12,11 +12,7 @@
 #include <time.h>
 #include "unistd.h"
 
-#ifdef BAZEL_BUILD
-#include "examples/protos/pubsub.grpc.pb.h"
-#else
 #include "pubsub.grpc.pb.h"
-#endif
 
 using namespace std;
 
@@ -43,8 +39,8 @@ struct Subscriber {
 };
 
 class PubsubServiceImpl final : public Pubsub::Service {
-  std::map<int, vector<Subscriber>> tag_to_subscriber;  // tag, Streams
-  std::mutex mtx[MAX_TAG_SIZE]; 
+  std::map<int,vector<Subscriber>> tag_to_subscriber;  // tag, Streams
+  std::mutex mtx[MAX_TAG_SIZE+1]; 
   std::map<int, deque<TagMessage>> message_database;
 
   long long message_lifespan =  60; // in seconds;
@@ -72,7 +68,7 @@ class PubsubServiceImpl final : public Pubsub::Service {
       sub.id = subscriber_counter;
       sub.writer = stream;
 
-      unique_lock<mutex> sub_lock(mtx[tag-1]);
+      unique_lock<mutex> sub_lock(mtx[tag]);
       tag_to_subscriber[tag].push_back(sub);
       sub_lock.unlock();
 
@@ -89,16 +85,20 @@ class PubsubServiceImpl final : public Pubsub::Service {
           cout << "A subscriber for tag " << tag << " has disconnected" << "\n";
           break;
         }
+        sleep(1);
       }
       cancel_subscriber(tag,sub.id);
-    } 
-    else return Status::CANCELLED; //return error if tag is not valid
+    }
+    else { 
+      cout << "   Failed, tag out of bounds\n";
+      return Status::CANCELLED; 
+    }
     return Status::OK;
   }
 
   void cancel_subscriber(int tag, int id) {
       //client cancelled, remove from the tag_to_subscriber map
-      unique_lock<mutex> cancel_lock(mtx[tag-1]);
+      unique_lock<mutex> cancel_lock(mtx[tag]);
       auto delete_pos = tag_to_subscriber[tag].end();
       for(auto entry = tag_to_subscriber[tag].begin(); entry != tag_to_subscriber[tag].end(); entry++) {
         if (entry->id == id) {
@@ -134,7 +134,7 @@ class PubsubServiceImpl final : public Pubsub::Service {
     TagMessage msg;
     while (publisher_stream->Read(&msg) && context->IsCancelled() == false) {
       target_tag = msg.message_tag();
-      std::unique_lock<mutex> write_lock(mtx[target_tag-1]);
+      std::unique_lock<mutex> write_lock(mtx[target_tag]);
 
       for (Subscriber subscriber : tag_to_subscriber[target_tag]) {
         ServerWriter<TagMessage>* subscriber_stream = subscriber.writer;
@@ -157,10 +157,8 @@ class PubsubServiceImpl final : public Pubsub::Service {
   }
 
   void ClearExpiredMessages(int tag) {
-      unique_lock<mutex> clear_lock(mtx[tag-1]);
-      while(true) {
-          if(message_database[tag].empty()) break;
-
+      unique_lock<mutex> clear_lock(mtx[tag]);
+      while(!message_database[tag].empty()) {
           auto entry = message_database[tag].begin();
           TagMessage msg = *entry;
           
